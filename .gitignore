@@ -1,0 +1,14 @@
+# Ignore model artifacts and datasets
+best_model.pth
+best_model_state_dict.pth
+best_model_state_dict.pth.gz
+*.pth
+*.pt
+dataset/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
