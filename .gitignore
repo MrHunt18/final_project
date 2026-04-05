@@ -1,14 +1,30 @@
-# Ignore model artifacts and datasets
+# Ignore model artifacts and large binaries
 best_model.pth
 best_model_state_dict.pth
 best_model_state_dict.pth.gz
 *.pth
 *.pt
+
+# Ignore dataset folders and temporary data
 dataset/
+dataset_all/
+
+# Ignore virtual environments
+venv/
+.venv
+.env
+heart_disease_prediction/myenv/
+
+# Ignore Python cache and log/temp files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
-.venv
-venv/
+*.log
+temp_ecg_for_streamlit.png
+
+# Ignore shortcut and OS artifacts
+*.lnk
+*.exe
+*.tmp
+*.bak
