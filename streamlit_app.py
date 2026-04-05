@@ -5,6 +5,7 @@ import streamlit as st
 import torch
 import pandas as pd
 import gdown
+from urllib.parse import urlparse, parse_qs
 from PIL import Image
 from torchvision import transforms
 from models.resnet_model import get_model
@@ -15,7 +16,21 @@ HEART_DIR = os.path.join(ROOT, "heart_disease_prediction")
 MODEL_PKL = os.path.join(HEART_DIR, "model.pkl")
 PREPROCESSOR_PKL = os.path.join(HEART_DIR, "preprocessor.pkl")
 LOCAL_MODEL_PATH = os.path.join(ROOT, "best_model_state_dict.pth.gz")
-GDRIVE_FILE_ID = "YOUR_FILE_ID_HERE"
+GDRIVE_FILE_ID = "https://drive.google.com/file/d/1bzQQSQi96Ed8HUQA3Zzyh6ONmTydHmsH/view?usp=sharing"
+
+
+def extract_drive_file_id(file_id_or_url: str) -> str:
+    if file_id_or_url.startswith("http"):
+        parsed = urlparse(file_id_or_url)
+        if "drive.google.com" in parsed.netloc:
+            if parsed.path.startswith("/file/d/"):
+                parts = parsed.path.split("/")
+                if len(parts) >= 4:
+                    return parts[3]
+            params = parse_qs(parsed.query)
+            if "id" in params:
+                return params["id"][0]
+    return file_id_or_url
 
 # Load heart disease model and preprocessor once
 heart_model = None
@@ -37,6 +52,7 @@ def download_model_from_drive(file_id: str, dest_path: str) -> str:
     if os.path.exists(dest_path):
         return dest_path
 
+    file_id = extract_drive_file_id(file_id)
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     gdown.download(url, dest_path, quiet=False)
     return dest_path
@@ -53,7 +69,7 @@ def load_ecg_model(model_path: str):
     return model
 
 ecg_model = None
-if GDRIVE_FILE_ID == "YOUR_FILE_ID_HERE":
+if not GDRIVE_FILE_ID or "YOUR_FILE_ID_HERE" in GDRIVE_FILE_ID:
     st.warning("Set GDRIVE_FILE_ID in streamlit_app.py after uploading the compressed model to Google Drive.")
 else:
     try:
@@ -61,7 +77,7 @@ else:
         ecg_model = load_ecg_model(model_path)
     except Exception as error:
         ecg_model = None
-        st.error("Unable to load ECG model from Google Drive. Check the file ID and network access.")
+        st.error(f"Unable to load ECG model from Google Drive. Check the file ID and network access. Error: {error}")
 
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
