@@ -1,3 +1,4 @@
+import argparse
 import gzip
 import io
 import torch
@@ -9,11 +10,12 @@ from models.resnet_model import get_model
 def load_compressed_state_dict(path: str):
     with gzip.open(path, "rb") as f:
         buffer = io.BytesIO(f.read())
-    return torch.load(buffer, map_location="cpu")
+    state_dict = torch.load(buffer, map_location="cpu")
+    return state_dict
 
 
-def validate_model(path: str, image_path: str):
-    state_dict = load_compressed_state_dict(path)
+def test_model(compressed_model_path: str, image_path: str):
+    state_dict = load_compressed_state_dict(compressed_model_path)
     model = get_model(num_classes=4)
     model.load_state_dict(state_dict)
     model.eval()
@@ -28,17 +30,21 @@ def validate_model(path: str, image_path: str):
     input_tensor = transform(image).unsqueeze(0)
 
     with torch.no_grad():
-        outputs = model(input_tensor)
-        print("Output shape:", outputs.shape)
-        print("Predicted class:", outputs.argmax(dim=1).item())
+        output = model(input_tensor)
+        predicted = output.argmax(dim=1).item()
+
+    print("Model loaded successfully.")
+    print("Output shape:", output.shape)
+    print("Predicted class index:", predicted)
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Validate a compressed PyTorch model artifact.")
-    parser.add_argument("--model", required=True, help="Path to the compressed model file.")
-    parser.add_argument("--image", required=True, help="Path to a sample ECG image.")
+    parser = argparse.ArgumentParser(description="Validate a compressed PyTorch ECG model")
+    parser.add_argument("--model", default="best_model_state_dict.pth.gz", help="Compressed model path")
+    parser.add_argument("--image", default=None, help="Path to an ECG image for sanity check")
     args = parser.parse_args()
 
-    validate_model(args.model, args.image)
+    if args.image is None:
+        raise SystemExit("Please provide --image to validate the model with a sample image.")
+
+    test_model(args.model, args.image)

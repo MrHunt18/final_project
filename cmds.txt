@@ -1,0 +1,7 @@
+.venv\Scripts\activate
+
+python predict.py
+
+python measure_optimizer.py ------ optimizer volumetrics
+
+streamlit run streamlit.py

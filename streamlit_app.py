@@ -1,124 +1,109 @@
 import os
-import gzip
-import io
+import pickle
+
 import streamlit as st
 import torch
 import pandas as pd
-import gdown
-from urllib.parse import urlparse, parse_qs
 from PIL import Image
 from torchvision import transforms
-from models.resnet_model import get_model
 
-# Paths
+from drive_utils import download_from_gdrive
+from model_loader import load_ecg_model
+
 ROOT = os.path.abspath(os.path.dirname(__file__))
 HEART_DIR = os.path.join(ROOT, "heart_disease_prediction")
 MODEL_PKL = os.path.join(HEART_DIR, "model.pkl")
 PREPROCESSOR_PKL = os.path.join(HEART_DIR, "preprocessor.pkl")
 LOCAL_MODEL_PATH = os.path.join(ROOT, "best_model_state_dict.pth.gz")
-GDRIVE_FILE_ID = "https://drive.google.com/file/d/1bzQQSQi96Ed8HUQA3Zzyh6ONmTydHmsH/view?usp=sharing"
+GDRIVE_FILE_ID = "1bzQQSQi96Ed8HUQA3Zzyh6ONmTydHmsH"
 
 
-def extract_drive_file_id(file_id_or_url: str) -> str:
-    if file_id_or_url.startswith("http"):
-        parsed = urlparse(file_id_or_url)
-        if "drive.google.com" in parsed.netloc:
-            if parsed.path.startswith("/file/d/"):
-                parts = parsed.path.split("/")
-                if len(parts) >= 4:
-                    return parts[3]
-            params = parse_qs(parsed.query)
-            if "id" in params:
-                return params["id"][0]
-    return file_id_or_url
+def load_heart_models():
+    if os.path.exists(MODEL_PKL) and os.path.exists(PREPROCESSOR_PKL):
+        with open(MODEL_PKL, "rb") as f:
+            heart_model = pickle.load(f)
+        with open(PREPROCESSOR_PKL, "rb") as f:
+            heart_preprocessor = pickle.load(f)
+        return heart_model, heart_preprocessor
+    return None, None
 
-# Load heart disease model and preprocessor once
-heart_model = None
-heart_preprocessor = None
 
-if os.path.exists(MODEL_PKL) and os.path.exists(PREPROCESSOR_PKL):
-    with open(MODEL_PKL, "rb") as f:
-        heart_model = pd.read_pickle(f)
-    with open(PREPROCESSOR_PKL, "rb") as f:
-        heart_preprocessor = pd.read_pickle(f)
+@st.cache_resource
+def get_ecg_model():
+    if os.path.exists(LOCAL_MODEL_PATH):
+        return load_ecg_model(LOCAL_MODEL_PATH)
+
+    model_path = download_from_gdrive(GDRIVE_FILE_ID, LOCAL_MODEL_PATH)
+    return load_ecg_model(model_path)
+
+
+@st.cache_resource
+def get_image_transform():
+    return transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+    ])
+
+
+heart_model, heart_preprocessor = load_heart_models()
 
 st.set_page_config(page_title="Combined ECG + Heart Disease App", layout="wide")
 
 st.title("Combined Heart Disease & ECG Detection")
 st.markdown("This app integrates ECG image detection and tabular heart disease prediction.")
 
-@st.cache_data(show_spinner=False)
-def download_model_from_drive(file_id: str, dest_path: str) -> str:
-    if os.path.exists(dest_path):
-        return dest_path
-
-    file_id = extract_drive_file_id(file_id)
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    gdown.download(url, dest_path, quiet=False)
-    return dest_path
-
-@st.cache_resource
-def load_ecg_model(model_path: str):
-    with gzip.open(model_path, "rb") as f:
-        buffer = io.BytesIO(f.read())
-
-    state_dict = torch.load(buffer, map_location="cpu")
-    model = get_model(num_classes=4)
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model
-
-ecg_model = None
-if not GDRIVE_FILE_ID or "YOUR_FILE_ID_HERE" in GDRIVE_FILE_ID:
-    st.warning("Set GDRIVE_FILE_ID in streamlit_app.py after uploading the compressed model to Google Drive.")
-else:
-    try:
-        model_path = download_model_from_drive(GDRIVE_FILE_ID, LOCAL_MODEL_PATH)
-        ecg_model = load_ecg_model(model_path)
-    except Exception as error:
-        ecg_model = None
-        st.error(f"Unable to load ECG model from Google Drive. Check the file ID and network access. Error: {error}")
-
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-])
-
-class_names = ["abnormal", "history_mi", "mi", "normal"]
-
 tab1, tab2 = st.tabs(["ECG Detection", "Heart Disease Tabular"])
 
 with tab1:
     st.header("ECG Image Classification")
-    uploaded = st.file_uploader("Upload ECG image", type=["png", "jpg", "jpeg", "bmp"])
-    if uploaded is not None:
-        image = Image.open(uploaded).convert("RGB")
+    uploaded_file = st.file_uploader("Upload ECG image", type=["png", "jpg", "jpeg", "bmp"])
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file).convert("RGB")
         st.image(image, caption="Uploaded ECG", use_column_width=True)
 
-        if st.button("Run ECG Prediction"):
-            if ecg_model is None:
-                st.error("ECG model is not loaded.")
-            else:
-                input_tensor = transform(image).unsqueeze(0)
-                with torch.no_grad():
-                    outputs = ecg_model(input_tensor)
-                    probs = torch.softmax(outputs, dim=1).squeeze()
-                    pred = probs.argmax().item()
+        try:
+            ecg_model = get_ecg_model()
+            transform = get_image_transform()
+        except Exception as e:
+            ecg_model = None
+            transform = None
+            st.error(f"Unable to load ECG model: {e}")
 
-                st.write(f"Prediction: **{class_names[pred]}**")
-                st.write(f"Confidence: **{probs[pred].item() * 100:.1f}%**")
+        if st.button("Run ECG Prediction"):
+            if ecg_model is None or transform is None:
+                st.error("ECG model is not available. Please check your Google Drive file ID and connection.")
+            else:
+                try:
+                    input_tensor = transform(image).unsqueeze(0)
+                    with torch.no_grad():
+                        outputs = ecg_model(input_tensor)
+                        probs = torch.softmax(outputs, dim=1).squeeze()
+                        predicted_index = int(probs.argmax().item())
+
+                    class_names = ["abnormal", "history_mi", "mi", "normal"]
+                    prediction = class_names[predicted_index]
+                    confidence = float(probs[predicted_index].item() * 100)
+
+                    st.success(f"Prediction: **{prediction}**")
+                    st.write(f"Confidence: **{confidence:.1f}%**")
+
+                    st.markdown("**Class probabilities:**")
+                    for name, score in zip(class_names, probs.tolist()):
+                        st.write(f"- {name}: {score * 100:.2f}%")
+                except Exception as e:
+                    st.error(f"Prediction failed: {e}")
 
 with tab2:
     st.header("Heart Disease Prediction (Tabular)")
     if heart_model is None or heart_preprocessor is None:
         st.warning("Heart disease model/preprocessor not found in heart_disease_prediction folder.")
     else:
-        fields = ['age','sex','cp','trestbps','chol','fbs','restecg','thalach','exang','oldpeak','slope','ca','thal']
+        fields = ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal']
         user_vals = {}
         cols = st.columns(3)
         for i, fld in enumerate(fields):
-            if fld in ["age","trestbps","chol","thalach","oldpeak"]:
+            if fld in ["age", "trestbps", "chol", "thalach", "oldpeak"]:
                 user_vals[fld] = cols[i % 3].number_input(
                     fld,
                     value=0.0 if fld == "oldpeak" else 0,
@@ -133,10 +118,11 @@ with tab2:
                 x_enc = heart_preprocessor.transform(df_in)
                 prob = heart_model.predict_proba(x_enc)[:, 1][0]
                 pred = int(prob >= 0.5)
-                st.write(f"Probability of heart disease: {prob:.4f}")
-                st.write("Prediction: ✅ Heart disease" if pred == 1 else "Prediction: ❌ No heart disease")
+                #st.write(f"Probability of heart disease: {prob:.4f}")
+                st.write("Prediction: ✅ there is a risk of Heart disease" if pred == 1 else "Prediction: ❌ No heart disease risk")
+                
             except Exception as e:
                 st.error(f"Error during prediction: {e}")
 
 st.markdown("---")
-st.write("Built from existing ECG detection and heart_disease_prediction modules.")
+st.write("this is just an insight, please consult the professionals.")

@@ -1,8 +1,10 @@
 torch
 torchvision
-gdown
 numpy
 matplotlib
 scikit-learn==1.6.1
 streamlit
 xgboost
+pandas
+pillow
+gdown
